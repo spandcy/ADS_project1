@@ -1,0 +1,380 @@
+---
+title: ""
+output:
+    html_document:
+    df_print: paged
+---
+
+
+
+>#**The happy moment for different people**
+>#**What did they write? What makes them happy today?**
+<center>By yang chen</center>  
+
+
+![](C:/Users/65451_000/Desktop/Columbia/AU 18/5243/Fall2018-Proj1-spandcy/figs/happy.jpg)
+
+\newline
+\newline
+\newline
+<font size=4>
+Happiness comes suddenly and disappear even before you realize that, people write their feelings on the diary in the old time, however with the tech grow, people would try another way to record their happiness, the blog. Here we get a corpus of 100,000 crowd-sourced happy moments and want to find out the reason made them happy. We apply natural language processing and text mining techniques to explore the data.
+
+
+\newline
+\newline
+\newline
+
+
+
+
+```{r ,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(DT)
+library(scales)
+library(wordcloud2)
+library(gridExtra)
+library(ngram)
+library(dplyr)
+library(janeaustenr)
+library(tidytext)
+library(SnowballC)
+library(wordcloud)
+library(koRpus)
+```
+
+
+
+We use the processed data for our analysis and combine it with the demographic information available.
+
+>##Part 1: Single Word Analysis: 
+
+First of all, we processed data for our analysis and combine it with the demographic information such as gender, martial, age, partnerhood and analyze and get the frequency of the words used most in their blogs. The high frequency word might be the primary reason why they happy.
+
+
+```{r load data, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data <- read_csv("C:/Users/65451_000/Desktop/Columbia/AU 18/5243/Fall2018-Proj1-spandcy/output/processed_moments.csv")
+
+urlfile<-'https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv'
+demo_data <- read_csv(urlfile)
+```
+
+```{r combining data, warning=FALSE, message=FALSE,echo=FALSE}
+hm_data <- hm_data %>%
+  inner_join(demo_data, by = "wid") %>%
+  select(wid,
+         original_hm,
+         gender, 
+         marital, 
+         parenthood,
+         reflection_period,
+         age, 
+         country, 
+         ground_truth_category, 
+         text) %>%
+  mutate(count = sapply(hm_data$text, wordcount)) %>%
+  filter(gender %in% c("m", "f")) %>%
+  filter(marital %in% c("single", "married")) %>%
+  filter(parenthood %in% c("n", "y")) %>%
+  filter(reflection_period %in% c("24h", "3m")) %>%
+  mutate(reflection_period = fct_recode(reflection_period, 
+                                        months_3 = "3m", hours_24 = "24h"))
+```
+```{r , warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+bag_of_words <-  hm_data %>%
+  unnest_tokens(word, text)
+
+word_count_only <- bag_of_words %>%
+  count(word, sort = TRUE)
+
+
+word_count <- bag_of_words %>%
+  count(wid,word,gender,marital,parenthood,reflection_period,country, sort = TRUE)
+```
+
+```{r ,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+wordcloud(word_count_only$word, word_count_only$n, max.words=100, colors=brewer.pal(1, "Dark2"))
+```  
+  
+  
+We notice friends have the highest frequency in the word cloud which might be the primary reason why people happy, however someone might argue that some noise words like 'day' take no meaning. We want to see the keywords regarding to each person or each blog, we need to see the realationship between words and words.
+
+```{r ,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(igraph)
+library(ggraph)
+
+hm_bigrams <- hm_data %>%
+  filter(count != 1) %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+bigram_counts <- hm_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ") %>%
+  count(word1, word2, sort = TRUE)
+
+bigram_graph <- bigram_counts %>%
+  filter(n > 100) %>%
+  graph_from_data_frame()
+
+
+set.seed(0)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+In bigram relationship, we believe friend is the most important word which consist the bigram phrase, we know that friends are important to people regardless of male/female, partner or not, nationality, we still want to see the relative high frequency words for each demographic group respectively, here we use tf-idf to find the relative important keywords.
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(textstem)
+bag_of_words$word=lemmatize_words(bag_of_words$word)
+word_count_lemm <- bag_of_words %>%
+  count(word, sort = TRUE)
+
+library(tm)
+
+hm_corpus <- VCorpus(VectorSource(hm_data$original_hm))
+hm_corpus = tm_map(hm_corpus, content_transformer(tolower))
+hm_corpus = tm_map(hm_corpus, removeNumbers)
+hm_corpus = tm_map(hm_corpus, removePunctuation)
+hm_corpus = tm_map(hm_corpus, removeWords, c("the", "and",'day','go','get','went','got','happiness','happy', stopwords("english")))
+hm_corpus =  tm_map(hm_corpus, stripWhitespace)
+  
+
+hm_tfidf <- DocumentTermMatrix(hm_corpus, control = list(weighting = weightTfIdf))
+hm_tfidf = removeSparseTerms(hm_tfidf, 0.99)
+
+freq = data.frame(sort(colSums(as.matrix(hm_tfidf)), decreasing=TRUE))
+df=data.frame(lemm_words=lemmatize_words(rownames(freq)),score=freq[,1])
+df_new=df[!duplicated(df$lemm_words), ]
+wordcloud(df_new$lemm_words, df_new$score, max.words=100, colors=brewer.pal(3, "Dark2"))
+```  
+  
+  
+Now the word cloud emphasis looks better than the previously, 'friend' might be less relative important. Then we need to analyze the time period influence , partnerhood, martial and gender followed.  
+  
+  
+>**Reasons:**
+
+In the word cloud, 'today' VS 'yesterday'; 'Wife' & 'husband', 'daughter' and 'son' attract my eyes which means people get happinese from these factors.
+  
+  
+>##Part 2: Demographic Analysis & Sentimental Analysis: 
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+hm_words_time <- word_count %>%
+  bind_tf_idf(word, wid, n)
+hm_words_time
+
+hm_words_time <- hm_words_time[nchar(hm_words_time$word)>3,]
+
+hm_words_time %>% 
+  group_by(reflection_period) %>% 
+  top_n(15, tf_idf) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(word, tf_idf, fill = gender)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~reflection_period, ncol = 2, scales = "free") +
+  coord_flip()
+
+```
+
+This is the relative keywords with reflection period and gender, in the past 24 hours people feel happy with job, date, homework and etc.and in the three month period we there is negative words like jail, cocain, cussed. We analyze the sentiment by different age group here.
+  
+  
+>**Reasons:**
+
+In the graph we notice some negative words even drugs inside, regardless of reflection period, we realize that such negative words might be written by the young adult, since most likely 'cocain', 'jail' these happened on young adult.
+
+We define people from age 17 to 30 as young adult, 30 to 60 as mid aged and over 60 as seniors
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+young_words <-  hm_data %>%
+  filter(age >=17 & age<30) %>%
+  unnest_tokens(word, text)
+
+mid_age_words <- hm_data %>%
+  filter(age >=30 & age<60) %>%
+  unnest_tokens(word, text)
+
+senior_words <- hm_data %>%
+  filter(age >60) %>%
+  unnest_tokens(word, text)
+
+age_stage <- bind_rows(young_words %>%
+                         inner_join(get_sentiments("bing")) %>%
+                         count(word, sentiment) %>%
+                         spread(sentiment, n, fill = 0) %>%
+                         mutate(sentiment = positive - negative,method="young_adult"),
+                       mid_age_words %>%
+                         inner_join(get_sentiments("bing")) %>%
+                         count(word, sentiment) %>%
+                         spread(sentiment, n, fill = 0) %>%
+                         mutate(sentiment = positive - negative,method="mid_aged"),
+                       senior_words %>%
+                         inner_join(get_sentiments("bing")) %>%
+                         count(word, sentiment) %>%
+                         spread(sentiment, n, fill = 0) %>%
+                         mutate(sentiment = positive - negative,method="senior"))
+
+
+age_stage %>%
+  ggplot(aes(word, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "sentiment")+
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+ggplot(age_stage, aes(x = method, y = sentiment, color = method)) + 
+  geom_boxplot() # draw a boxplot for different age group
+
+```  
+  
+Here we notice that senior has extremely low sentiment score, because senior have much more experience than young adult and mid-aged did. By the boxplot we notice young adult have more extremley value than mid-aged for the positive and negative which make sense. 
+Young adults are more likely to feel happinese, even from 'cocain' or 'jail', they wrongly define such stimulate as 'happinese'. 
+Because their wrongly emotion, here I have to do the positive and negative word cloud to recognize
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(reshape2)
+bag_of_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray80", "gray20"),
+                   max.words = 100)
+```
+  
+We notice that most negatvie keywords are past tense and should be happened previously which make authors feel happy today.
+That make sense for the word 'jail' since the prisoner just leave **jail** he feel happy for that moment.
+In summary, we believe, happinese exist no matter the reflection period, senior less likely to feel happinese than young adults and mid-aged people; when people overcome most past negative experience, they will feel happinese afterwards. 
+
+
+>##Part 3: Topic Analysis:
+
+
+we notice there are gender, parenthood, reflection period, age marital and country, we firstly divide into two topic to see the result
+
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(topicmodels)
+minimumFrequency <- 5
+DTM <- DocumentTermMatrix(hm_corpus, control = list(bounds = list(global = c(minimumFrequency, Inf))))
+sel_idx <- slam::row_sums(DTM) > 0
+DTM <- DTM[sel_idx, ]
+topicModel <- LDA(DTM, 2, method="Gibbs", control=list(iter = 500, verbose = 25))
+
+text_topics <- tidy(topicModel, matrix = "beta")
+text_top_terms <- text_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+text_top_terms %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip()
+
+beta_spread <- text_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  spread(topic, beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+
+beta_spread %>%
+  group_by(direction = log_ratio > 0) %>%
+  top_n(15, abs(log_ratio)) %>%
+  ungroup() %>%
+  mutate(term = reorder(term, log_ratio)) %>%
+  ggplot(aes(term, log_ratio)) +
+  geom_col() +
+  labs(y = "Log2 ratio of beta in topic 2 / topic 1") +
+  coord_flip()
+
+```
+
+We find that the topic 1 and topic 2 might be divided by time period, with topic one appear word like 'years' while topic 2 have words like 'yesterday' and 'today'. Nevertheless there is not much information we can get from 2 topic we still have no idea why people get happy. Hence we need to divide for more topics, next we use 20 topic to see the results.
+
+
+
+
+```{r ,dpi = 200,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+
+
+# set random number generator seed
+set.seed(9161)
+# compute the LDA model, inference via 1000 iterations of Gibbs sampling
+topicModel_12 <- LDA(DTM, 12, method="Gibbs", control=list(iter = 500, verbose = 25))
+
+text_topics_12 <- tidy(topicModel_12, matrix = "beta")
+text_top_terms_12 <- text_topics_12 %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+text_top_terms_12 %>%
+  mutate(term = reorder(term, beta)) %>%
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic,nrow=5, scales = "free") +
+  theme(axis.text=element_text(size=7),
+        axis.title=element_text(size=7,face="bold"))+
+  coord_flip()
+```
+
+12 Topic is more useful than before for example topic 3 is regarding parenthood, topic 1 is regarding long-time-period trips topic 2 is regarding anniversary like birthday, topic 4 is regarding child school, topic 5 is regarding entainment and etc. From these topic we believe that, for parentnerhood, child might be their happinese, marital spouse will be their happinese, for mid-aged people working and daily males will be their happinese, for young adult, friends might be their primary happinese. 
+
+Finally we do some clustering analysis, here I choose k-mean based on the TFIDF scores,basically I want to divide cluster to martial,parenthood,gender,age, nationality and reflection time period
+
+
+```{r,warning=FALSE,error=FALSE,echo=FALSE,message=FALSE}
+library(cluster)
+library(factoextra)
+tdm <- DocumentTermMatrix(hm_corpus) 
+tdm.tfidf <- weightTfIdf(tdm)
+tdm.tfidf <- removeSparseTerms(tdm.tfidf, 0.99) 
+tfidf.matrix <- as.matrix(tdm.tfidf) 
+clustering.kmeans <- kmeans(tfidf.matrix,iter.max=200,centers=6) 
+fviz_cluster(clustering.kmeans, data=tfidf.matrix, geom = c("point"),ellipse.type ="convex",
+         xlab = "x-axis label", ylab = "y-axis label")+theme_minimal()
+
+```
+
+
+From the kmeans clustering plot we notice that there is no obviously clustering, six center are very close to each others, in fact six clustering even share the same content, which definitely means that people from different cluster have the same issues to make them happy, here we say family members or friends. 
+
+
+---
+
+> ## Conclusions
+
+![](C:/Users/65451_000/Desktop/Columbia/AU 18/5243/Fall2018-Proj1-spandcy/figs/happy_moment.jpg)
+
+  
+* In general, for all people from different country, age and other demographic, the moment they make friends, friends pay visits is the top one reason make them feel happy, second come with their family memebers. Since everyone have at least one friend and family member.
+* To be more detailed, for people with different demographic we believe that senior age people have less motion violate in their blogs and words, while mid-aged and young adults have similar emotion violatility. Young adults have huge impact for positive and negative motion. Some young adult will wrongly determine 'release from jail', 'cocain' as sense of happinese.
+* The mainly difference between two topics should be the reflection time, if we divide the topic specificy we believe there are many reason to make people happy including   
+  
+  
+**earning from work**, **achievement of online purchasing**, **freshness of new things**, **love from parents**, **growth of children**, **outgoing dating and catering**, **weather of today**, **works(promotion) in the company**, **memorial day like wedding and birthday**, **Achivement finish project before deadline**, **School outdoor activity**, **honeymoon and spouse relationship**, **boyfriend and girlfriend realationship** and etc.
+
+
+---
+
+<font size=1.5>
+**Reference:**   
+
+1. Data Demographic: From<https://raw.githubusercontent.com/rit-public/HappyDB/master/happydb/data/demographic.csv>   
+
+2. happy: From<http://goodcounselcollege.ie/wp-content/uploads/2015/03/header.jpg>  
+
+3. image: From<https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTvuEQ2q61C5fbpgw_VWiDldZGxrKIybehQgR3obPC5CuI81Sqv)> </front>
+
